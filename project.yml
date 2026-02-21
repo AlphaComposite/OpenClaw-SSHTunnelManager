@@ -1,0 +1,27 @@
+name: SSHTunnelManager
+options:
+  bundleIdPrefix: com.openclaw
+  deploymentTarget:
+    macOS: "13.0"
+  groupSortPosition: none
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "13.0"
+targets:
+  SSHTunnelManager:
+    type: application
+    platform: macOS
+    sources:
+      - SSHTunnelManager
+    settings:
+      base:
+        INFOPLIST_FILE: SSHTunnelManager/Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: com.openclaw.SSHTunnelManager
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: 1
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: false
+        COMBINE_HIDPI_IMAGES: true

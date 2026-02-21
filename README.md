@@ -1,4 +1,4 @@
-# SSH Tunnel Manager
+# OpenClaw SSH Tunnel Manager
 
 A lightweight macOS menu bar app for managing persistent SSH tunnel connections. Originally built to keep [OpenClaw](https://github.com/openclaw/openclaw) accessible on a remote server — if you're running OpenClaw on a VPS, its web dashboard lives at `127.0.0.1:18789` on the remote host, and you need an SSH tunnel to reach it from your local machine. This app keeps that tunnel alive so you can always access it at `localhost:18789` in your browser.
 

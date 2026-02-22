@@ -51,7 +51,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func observeStatusChanges() {
         tunnelManager.objectWillChange
-            .receive(on: RunLoop.main)
+            .debounce(for: .milliseconds(50), scheduler: RunLoop.main)
             .sink { [weak self] _ in
                 self?.updateStatusIcon()
             }
@@ -62,36 +62,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem?.button else { return }
 
         let statuses = tunnelManager.tunnels.map { $0.status }
+        let total = statuses.count
+        let connectedCount = statuses.filter { $0 == .connected }.count
+        let isTransient = statuses.contains { $0 == .connecting || $0 == .reconnecting }
 
         let color: NSColor
-        if statuses.isEmpty {
+        if total == 0 {
             color = .systemGray
-        } else if statuses.allSatisfy({ $0 == .connected }) {
-            color = .systemGreen
-        } else if statuses.contains(where: { $0 == .connecting || $0 == .reconnecting }) {
+        } else if isTransient {
             color = .systemYellow
-        } else if statuses.contains(where: { $0 == .connected }) {
-            // Mixed: some connected, some not
-            color = .systemOrange
+        } else if connectedCount > 0 {
+            color = .systemGreen
         } else {
             color = .systemRed
         }
 
-        let size = NSSize(width: 18, height: 18)
-        let image = NSImage(size: size, flipped: false) { rect in
+        // Draw colored circle
+        let circleSize = NSSize(width: 18, height: 18)
+        let circleImage = NSImage(size: circleSize, flipped: false) { _ in
             color.setFill()
             let diameter: CGFloat = 10
             let circleRect = NSRect(
-                x: (size.width - diameter) / 2,
-                y: (size.height - diameter) / 2,
+                x: (circleSize.width - diameter) / 2,
+                y: (circleSize.height - diameter) / 2,
                 width: diameter,
                 height: diameter
             )
             NSBezierPath(ovalIn: circleRect).fill()
             return true
         }
-        image.isTemplate = false
-        button.image = image
+        circleImage.isTemplate = false
+        button.image = circleImage
+
+        // Show count next to dot (e.g. "1/2"), or nothing if no tunnels
+        if total > 0 {
+            button.title = " \(connectedCount)/\(total)"
+        } else {
+            button.title = ""
+        }
     }
 
     @objc private func togglePopover() {

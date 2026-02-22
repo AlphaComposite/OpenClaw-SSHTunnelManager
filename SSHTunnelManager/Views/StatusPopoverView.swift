@@ -43,7 +43,8 @@ struct StatusPopoverView: View {
                 EditTunnelView(
                     tunnelManager: tunnelManager,
                     existingConfig: nil,
-                    onDismiss: { screen = .main }
+                    onDismiss: { screen = .main },
+                    onBulkImported: { screen = .main }
                 )
 
             case .editTunnel(let id):

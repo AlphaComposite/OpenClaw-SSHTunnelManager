@@ -1,9 +1,11 @@
 import SwiftUI
+import AppKit
 
 struct EditTunnelView: View {
     @ObservedObject var tunnelManager: TunnelManager
     var existingConfig: TunnelConfiguration?
     var onDismiss: () -> Void
+    var onBulkImported: (() -> Void)?
 
     @State private var name = ""
     @State private var sshUser = ""
@@ -16,15 +18,29 @@ struct EditTunnelView: View {
     @State private var autoReconnect = true
     @State private var serverAliveInterval = "15"
 
+    @State private var showPrefillBanner = false
+    @State private var prefillSnapshot: FieldSnapshot?
+
+    private struct FieldSnapshot {
+        let name, sshUser, sshHost, sshPort, localPort, remoteHost, remotePort, sshKeyPath: String
+    }
+
     private var isEditing: Bool { existingConfig != nil }
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
+            if showPrefillBanner {
+                prefillBannerView
+                Divider()
+            }
             formContent
         }
-        .onAppear(perform: populateFields)
+        .onAppear {
+            populateFields()
+            tryPrefillFromClipboard()
+        }
     }
 
     // MARK: - Header
@@ -131,6 +147,75 @@ struct EditTunnelView: View {
         Int(localPort) != nil && Int(localPort)! > 0 &&
         !remoteHost.trimmingCharacters(in: .whitespaces).isEmpty &&
         Int(remotePort) != nil && Int(remotePort)! > 0
+    }
+
+    // MARK: - Clipboard Prefill
+
+    private var prefillBannerView: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "wand.and.stars")
+                .foregroundColor(.accentColor)
+            Text("Prefilled from clipboard")
+            Spacer()
+            Button("Undo") {
+                if let snap = prefillSnapshot {
+                    name = snap.name
+                    sshUser = snap.sshUser
+                    sshHost = snap.sshHost
+                    sshPort = snap.sshPort
+                    localPort = snap.localPort
+                    remoteHost = snap.remoteHost
+                    remotePort = snap.remotePort
+                    sshKeyPath = snap.sshKeyPath
+                }
+                showPrefillBanner = false
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.mini)
+        }
+        .font(.caption)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .background(Color.accentColor.opacity(0.08))
+    }
+
+    private func tryPrefillFromClipboard() {
+        guard existingConfig == nil else { return }
+        guard let raw = NSPasteboard.general.string(forType: .string)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else { return }
+
+        let parsed = SSHCommandParser.parse(raw)
+        guard !parsed.isEmpty else { return }
+
+        if parsed.count > 1 {
+            // Multiple tunnels: bulk-import all and dismiss
+            for tunnel in parsed {
+                tunnelManager.addTunnel(tunnel.toConfiguration())
+            }
+            onBulkImported?() ?? onDismiss()
+            return
+        }
+
+        // Single tunnel: prefill the form
+        let t = parsed[0]
+        prefillSnapshot = FieldSnapshot(
+            name: name, sshUser: sshUser, sshHost: sshHost,
+            sshPort: sshPort, localPort: localPort,
+            remoteHost: remoteHost, remotePort: remotePort,
+            sshKeyPath: sshKeyPath
+        )
+
+        sshUser = t.sshUser
+        sshHost = t.sshHost
+        if let p = t.sshPort { sshPort = String(p) }
+        localPort = String(t.localPort)
+        remoteHost = t.remoteHost
+        remotePort = String(t.remotePort)
+        if let key = t.keyPath { sshKeyPath = key }
+        if name.isEmpty { name = t.suggestedName }
+
+        showPrefillBanner = true
     }
 
     // MARK: - Actions

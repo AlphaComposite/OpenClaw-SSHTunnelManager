@@ -8,7 +8,8 @@ While it was designed with OpenClaw in mind, it works for any SSH tunnel use cas
 
 ## Features
 
-- **Menu bar status indicator** — colored circle shows green (connected), red (disconnected), yellow (reconnecting), or gray (no tunnels configured)
+- **Menu bar status indicator** — colored circle with connection count (e.g., `🟢 2/3`) shows how many tunnels are connected at a glance. Green if any are connected, yellow while connecting, red if none are up.
+- **Clipboard import** — copy an SSH command like `ssh -N -L 18789:127.0.0.1:18789 root@server` to your clipboard, then click **+**. The form auto-fills from the command. Supports multiple `-L` flags in one command for bulk import.
 - **Auto-reconnect** — detects dropped connections and retries with exponential backoff (1s, 2s, 4s... up to 30s max)
 - **Multiple tunnels** — add, edit, and remove tunnel configurations through a UI
 - **Live activity log** — timestamped connection events per tunnel for debugging
@@ -73,7 +74,19 @@ Copy it to `/Applications` to keep it permanently, or run it directly from Deriv
 
 ## Setting Up Your First Tunnel
 
-1. Click the colored circle in the menu bar to open the dashboard
+### Quick way — paste from clipboard
+
+If you already have an SSH tunnel command, just copy it:
+
+```bash
+ssh -N -L 18789:127.0.0.1:18789 root@your.server.ip
+```
+
+Then click **+** in the app. The form will auto-fill from your clipboard. If the command has multiple `-L` flags, all tunnels are imported at once.
+
+### Manual setup
+
+1. Click the status indicator in the menu bar to open the dashboard
 2. Click the **+** button to add a new tunnel
 3. Fill in the connection details:
    - **Name**: A label for the tunnel (e.g., "OpenClaw")

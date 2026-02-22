@@ -15,6 +15,7 @@ While it was designed with OpenClaw in mind, it works for any SSH tunnel use cas
 - **Live activity log** — timestamped connection events per tunnel for debugging
 - **Manual controls** — connect, disconnect, and reconnect buttons
 - **SSH keepalive** — configurable `ServerAliveInterval` catches dead connections faster
+- **Right-click menu** — right-click the menu bar icon to toggle the connection count display or disconnect all tunnels and quit
 - **No dock icon** — lives entirely in the menu bar, out of your way
 
 ## Building from Source

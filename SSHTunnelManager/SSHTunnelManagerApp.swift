@@ -18,6 +18,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let tunnelManager = TunnelManager()
     private var cancellables = Set<AnyCancellable>()
 
+    private var showConnectionCount: Bool {
+        get { !UserDefaults.standard.bool(forKey: "hideConnectionCount") }
+        set {
+            UserDefaults.standard.set(!newValue, forKey: "hideConnectionCount")
+            updateStatusIcon()
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
         setupPopover()
@@ -33,8 +41,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
-            button.action = #selector(togglePopover)
             button.target = self
+            button.action = #selector(handleClick)
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
         updateStatusIcon()
     }
@@ -95,14 +104,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         button.image = circleImage
 
         // Show count next to dot (e.g. "1/2"), or nothing if no tunnels
-        if total > 0 {
+        if showConnectionCount && total > 0 {
             button.title = " \(connectedCount)/\(total)"
         } else {
             button.title = ""
         }
     }
 
-    @objc private func togglePopover() {
+    // MARK: - Click Handling
+
+    @objc private func handleClick() {
+        guard let event = NSApp.currentEvent else { return }
+        if event.type == .rightMouseUp {
+            showContextMenu()
+        } else {
+            togglePopover()
+        }
+    }
+
+    private func togglePopover() {
         guard let button = statusItem.button else { return }
         if popover.isShown {
             popover.performClose(nil)
@@ -110,5 +130,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
         }
+    }
+
+    // MARK: - Context Menu
+
+    private func showContextMenu() {
+        let menu = NSMenu()
+
+        let countItem = NSMenuItem(
+            title: "Show Connection Count",
+            action: #selector(toggleShowCount),
+            keyEquivalent: ""
+        )
+        countItem.target = self
+        countItem.state = showConnectionCount ? .on : .off
+        menu.addItem(countItem)
+
+        menu.addItem(.separator())
+
+        let quitItem = NSMenuItem(
+            title: "Disconnect All & Quit",
+            action: #selector(disconnectAndQuit),
+            keyEquivalent: "q"
+        )
+        quitItem.target = self
+        menu.addItem(quitItem)
+
+        statusItem.menu = menu
+        statusItem.button?.performClick(nil)
+        // Clear the menu so left-click goes back to popover
+        statusItem.menu = nil
+    }
+
+    @objc private func toggleShowCount() {
+        showConnectionCount.toggle()
+    }
+
+    @objc private func disconnectAndQuit() {
+        tunnelManager.disconnectAll()
+        NSApplication.shared.terminate(nil)
     }
 }

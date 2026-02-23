@@ -7,6 +7,8 @@ struct TunnelDetailView: View {
     var onEdit: () -> Void
 
     @State private var now = Date()
+    @State private var showPortConflict = false
+    @State private var conflictingTunnel: TunnelState?
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -20,6 +22,26 @@ struct TunnelDetailView: View {
             logSection
         }
         .onReceive(timer) { now = $0 }
+        .alert("Port Conflict", isPresented: $showPortConflict) {
+            Button("Switch") {
+                if let conflict = conflictingTunnel {
+                    tunnelManager.switchTo(tunnel, from: conflict)
+                }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            if let conflict = conflictingTunnel {
+                Text("Port \(tunnel.configuration.localPort) is in use by \"\(conflict.configuration.displayName)\". Disconnect it and connect this tunnel instead?")
+            }
+        }
+    }
+
+    private func tryConnect() {
+        let result = tunnelManager.connect(tunnel)
+        if case .portConflict(let existing) = result {
+            conflictingTunnel = existing
+            showPortConflict = true
+        }
     }
 
     // MARK: - Header
@@ -104,7 +126,7 @@ struct TunnelDetailView: View {
         HStack(spacing: 10) {
             switch tunnel.status {
             case .disconnected:
-                Button("Connect") { tunnelManager.connect(tunnel) }
+                Button("Connect") { tryConnect() }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
 
@@ -113,7 +135,10 @@ struct TunnelDetailView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
 
-                Button("Reconnect") { tunnelManager.reconnect(tunnel) }
+                Button("Reconnect") {
+                    tunnelManager.disconnect(tunnel)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { tryConnect() }
+                }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
 

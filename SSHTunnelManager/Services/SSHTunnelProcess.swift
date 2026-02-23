@@ -110,6 +110,12 @@ class SSHTunnelProcess {
             if self?.process?.isRunning == true {
                 self?.process?.interrupt()
             }
+            // SIGKILL fallback for truly hung processes (e.g. network wedge)
+            DispatchQueue.global().asyncAfter(deadline: .now() + 3) { [weak self] in
+                guard let pid = self?.process?.processIdentifier, pid != 0,
+                      self?.process?.isRunning == true else { return }
+                kill(pid, SIGKILL)
+            }
         }
     }
 

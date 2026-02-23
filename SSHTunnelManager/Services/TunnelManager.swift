@@ -1,6 +1,11 @@
 import Foundation
 import Combine
 
+enum ConnectResult {
+    case success
+    case portConflict(existingTunnel: TunnelState)
+}
+
 class TunnelManager: ObservableObject {
     @Published var tunnels: [TunnelState] = []
 
@@ -76,13 +81,34 @@ class TunnelManager: ObservableObject {
 
     // MARK: - Connection Control
 
-    func connect(_ tunnel: TunnelState) {
-        guard tunnel.status == .disconnected else { return }
+    @discardableResult
+    func connect(_ tunnel: TunnelState) -> ConnectResult {
+        guard tunnel.status == .disconnected else { return .success }
+
+        // Check for active port conflict
+        if let conflict = activeTunnelOnPort(tunnel.configuration.localPort, excluding: tunnel.id) {
+            return .portConflict(existingTunnel: conflict)
+        }
+
         tunnel.status = .connecting
         tunnel.reconnectAttempts = 0
         tunnel.addLog("Connecting to \(tunnel.configuration.sshUser)@\(tunnel.configuration.sshHost)...")
         objectWillChange.send()
         startSSHProcess(for: tunnel)
+        return .success
+    }
+
+    /// Disconnect the conflicting tunnel and connect the new one.
+    func switchTo(_ tunnel: TunnelState, from existing: TunnelState) {
+        disconnect(existing)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.connect(tunnel)
+        }
+    }
+
+    /// Returns an active (connected/connecting/reconnecting) tunnel on the given local port, if any.
+    func activeTunnelOnPort(_ port: Int, excluding id: UUID) -> TunnelState? {
+        tunnels.first { $0.id != id && $0.configuration.localPort == port && $0.status != .disconnected }
     }
 
     func disconnect(_ tunnel: TunnelState) {
@@ -198,6 +224,15 @@ class TunnelManager: ObservableObject {
         timer.setEventHandler { [weak self, weak tunnel] in
             guard let self = self, let tunnel = tunnel else { return }
             guard tunnel.status == .reconnecting else { return }
+
+            // If another tunnel now owns this port, stop trying
+            if let conflict = self.activeTunnelOnPort(tunnel.configuration.localPort, excluding: tunnel.id) {
+                tunnel.addLog("Port \(tunnel.configuration.localPort) now in use by \"\(conflict.configuration.displayName)\" — stopping reconnect")
+                tunnel.status = .disconnected
+                self.objectWillChange.send()
+                return
+            }
+
             tunnel.addLog("Attempting reconnection...")
             self.startSSHProcess(for: tunnel)
         }

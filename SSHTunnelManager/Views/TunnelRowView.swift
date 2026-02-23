@@ -5,6 +5,9 @@ struct TunnelRowView: View {
     var tunnelManager: TunnelManager
     var onSelect: () -> Void
 
+    @State private var showPortConflict = false
+    @State private var conflictingTunnel: TunnelState?
+
     var body: some View {
         HStack(spacing: 10) {
             Circle()
@@ -43,13 +46,33 @@ struct TunnelRowView: View {
         .padding(.vertical, 8)
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)
+        .alert("Port Conflict", isPresented: $showPortConflict) {
+            Button("Switch") {
+                if let conflict = conflictingTunnel {
+                    tunnelManager.switchTo(tunnel, from: conflict)
+                }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            if let conflict = conflictingTunnel {
+                Text("Port \(tunnel.configuration.localPort) is in use by \"\(conflict.configuration.displayName)\". Disconnect it and connect this tunnel instead?")
+            }
+        }
+    }
+
+    private func tryConnect() {
+        let result = tunnelManager.connect(tunnel)
+        if case .portConflict(let existing) = result {
+            conflictingTunnel = existing
+            showPortConflict = true
+        }
     }
 
     @ViewBuilder
     private var quickActionButton: some View {
         switch tunnel.status {
         case .disconnected:
-            Button(action: { tunnelManager.connect(tunnel) }) {
+            Button(action: { tryConnect() }) {
                 Image(systemName: "play.circle.fill")
                     .foregroundColor(.green)
             }

@@ -111,20 +111,26 @@ manager.tunnels.removeAll()
 let tunnel = TunnelState(configuration: config)
 manager.tunnels = [tunnel]
 
-let connectResult = manager.connect(tunnel)
-if case .failure(let error) = connectResult {
-    print("Failed to initiate connection: \(error)")
-    exit(1)
+func fail(_ message: String) -> Never {
+    FileHandle.standardError.write(Data((message + "\n").utf8))
+    Foundation.exit(1)
 }
 
-let timeout = Date().addingTimeInterval(10)
-while tunnel.status != .connected && Date() < timeout {
+switch manager.connect(tunnel) {
+case .success:
+    break
+case .portConflict(let existingTunnel):
+    fail("Tunnel failed to connect: local port conflict with \(existingTunnel.configuration.displayName)")
+}
+
+let connectionDeadline = Date().addingTimeInterval(10)
+while tunnel.status != .connected && Date() < connectionDeadline {
     RunLoop.main.run(until: Date().addingTimeInterval(0.1))
 }
 
-if tunnel.status != .connected {
-    print("Tunnel failed to reach connected state within timeout. Status: \(tunnel.status)")
-    exit(1)
+guard tunnel.status == .connected else {
+    let lastLog = tunnel.logs.last?.message ?? "No tunnel logs captured."
+    fail("Tunnel failed to reach connected state before timeout. Final status: \(tunnel.status.rawValue). Last log: \(lastLog)")
 }
 
 switch mode {

@@ -109,9 +109,7 @@ class SSHTunnelProcess {
 
     private func makeWrapperScript(parentPID: Int32) -> String {
         """
-        original_parent_pid=\(parentPID)
         parent_pid=\(parentPID)
-        wrapper_pid=$$
         child_pid=
 
         kill_tree() {
@@ -133,22 +131,8 @@ class SSHTunnelProcess {
             return
           fi
 
-          # Verify we're still the original wrapper process
-          current_ppid=$(ps -o ppid= -p "$wrapper_pid" 2>/dev/null | tr -d '[:space:]')
-          if [ "$current_ppid" != "$original_parent_pid" ] && [ -n "$current_ppid" ]; then
-            # Our PID has been recycled; don't signal potentially unrelated processes
-            return
-          fi
-
           kill_tree TERM "$child_pid"
           sleep 1
-
-          # Re-check before SIGKILL
-          current_ppid=$(ps -o ppid= -p "$wrapper_pid" 2>/dev/null | tr -d '[:space:]')
-          if [ "$current_ppid" != "$original_parent_pid" ] && [ -n "$current_ppid" ]; then
-            return
-          fi
-
           kill_tree KILL "$child_pid"
         }
 
@@ -158,17 +142,9 @@ class SSHTunnelProcess {
         child_pid=$!
 
         while kill -0 "$child_pid" 2>/dev/null; do
-          # Check if original parent is still alive
           if ! kill -0 "$parent_pid" 2>/dev/null; then
             cleanup_child_tree
             wait "$child_pid" 2>/dev/null || true
-            exit 0
-          fi
-
-          # Verify our wrapper PPID hasn't changed (PID recycling check)
-          current_ppid=$(ps -o ppid= -p "$wrapper_pid" 2>/dev/null | tr -d '[:space:]')
-          if [ -n "$current_ppid" ] && [ "$current_ppid" != "$original_parent_pid" ]; then
-            # Our PID was recycled; exit without cleanup
             exit 0
           fi
 

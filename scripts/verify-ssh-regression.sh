@@ -121,6 +121,8 @@ func fail(_ message: String) -> Never {
 switch manager.connect(tunnel) {
 case .success:
     break
+case .queuedWhileStopping:
+    fail("Tunnel connect was unexpectedly queued while stopping in a fresh harness run")
 case .portConflict(let existingTunnel):
     fail("Tunnel failed to connect: local port conflict with \(existingTunnel.configuration.displayName)")
 }

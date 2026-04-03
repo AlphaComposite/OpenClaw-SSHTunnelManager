@@ -148,8 +148,7 @@ struct TunnelDetailView: View {
                     .controlSize(.small)
 
                 Button("Reconnect") {
-                    tunnelManager.disconnect(tunnel)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { tryConnect() }
+                    tunnelManager.disconnect(tunnel) { tryConnect() }
                 }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)

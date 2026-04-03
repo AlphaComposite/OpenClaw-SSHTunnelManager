@@ -3,6 +3,7 @@ import Combine
 
 enum ConnectResult {
     case success
+    case queuedWhileStopping
     case portConflict(existingTunnel: TunnelState)
 }
 
@@ -14,6 +15,7 @@ class TunnelManager: ObservableObject {
     private var healthCheckTimer: DispatchSourceTimer?
     private var tunnelCancellables = Set<AnyCancellable>()
     private var stoppingTunnelIDs = Set<UUID>()
+    private var pendingConnectTunnelIDs = Set<UUID>()
 
     private let configKey = "SavedTunnelConfigurations"
 
@@ -95,8 +97,9 @@ class TunnelManager: ObservableObject {
     func connect(_ tunnel: TunnelState) -> ConnectResult {
         guard tunnel.status == .disconnected else { return .success }
         guard !stoppingTunnelIDs.contains(tunnel.id) else {
-            tunnel.addLog("Waiting for previous SSH process to stop...")
-            return .success
+            pendingConnectTunnelIDs.insert(tunnel.id)
+            tunnel.addLog("Waiting for previous SSH process to stop before reconnecting...")
+            return .queuedWhileStopping
         }
 
         // Check for active port conflict
@@ -142,9 +145,18 @@ class TunnelManager: ObservableObject {
 
         stoppingTunnelIDs.insert(tunnel.id)
         process.stop { [weak self] in
-            self?.processes.removeValue(forKey: tunnel.id)
-            self?.stoppingTunnelIDs.remove(tunnel.id)
+            guard let self else {
+                completion?()
+                return
+            }
+
+            let shouldReconnect = self.pendingConnectTunnelIDs.remove(tunnel.id) != nil
+            self.processes.removeValue(forKey: tunnel.id)
+            self.stoppingTunnelIDs.remove(tunnel.id)
             completion?()
+            if shouldReconnect && tunnel.status == .disconnected {
+                self.connect(tunnel)
+            }
         }
     }
 

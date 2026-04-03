@@ -6,10 +6,8 @@ struct TunnelDetailView: View {
     var onBack: () -> Void
     var onEdit: () -> Void
 
-    @State private var now = Date()
     @State private var showPortConflict = false
     @State private var conflictingTunnel: TunnelState?
-    let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,7 +19,6 @@ struct TunnelDetailView: View {
             Divider()
             logSection
         }
-        .onReceive(timer) { now = $0 }
         .alert("Port Conflict", isPresented: $showPortConflict) {
             Button("Switch") {
                 if let conflict = conflictingTunnel {
@@ -92,8 +89,8 @@ struct TunnelDetailView: View {
                 detailRow("Local", "localhost:\(tunnel.configuration.localPort)")
                 detailRow("Remote", "\(tunnel.configuration.sshUser)@\(tunnel.configuration.sshHost):\(tunnel.configuration.remotePort)")
 
-                if let uptime = tunnel.uptimeString(relativeTo: now) {
-                    detailRow("Uptime", uptime)
+                if let connectedSince = tunnel.connectedSince {
+                    uptimeRow(connectedSince: connectedSince)
                 }
 
                 if let lastDisconnect = tunnel.lastDisconnectFormatted {
@@ -107,6 +104,21 @@ struct TunnelDetailView: View {
             .font(.caption)
         }
         .padding(16)
+    }
+
+    private func uptimeRow(connectedSince: Date) -> some View {
+        HStack(alignment: .top) {
+            Text("Uptime")
+                .foregroundColor(.secondary)
+                .frame(width: 110, alignment: .leading)
+
+            TimelineView(.periodic(from: connectedSince, by: 1)) { context in
+                Text(tunnel.uptimeString(relativeTo: context.date) ?? "—")
+                    .monospacedDigit()
+            }
+
+            Spacer()
+        }
     }
 
     private func detailRow(_ label: String, _ value: String) -> some View {

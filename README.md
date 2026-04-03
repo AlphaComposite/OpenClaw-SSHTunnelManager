@@ -73,6 +73,31 @@ The built app will be at:
 
 Copy it to `/Applications` to keep it permanently, or run it directly from DerivedData.
 
+**Option C — Make targets:**
+
+```bash
+make build
+make install
+```
+
+`make install` builds the Release app and copies it to `/Applications/SSHTunnelManager.app`.
+
+## Verification
+
+Run the regression check for the connected-tunnel CPU/orphan-process bug:
+
+```bash
+make verify
+```
+
+This script:
+
+- starts a temporary local `sshd`
+- opens a real SSH tunnel using the app’s tunnel process code
+- checks connected CPU stays low
+- verifies SSH tunnel processes are cleaned up after disconnect
+- verifies SSH tunnel processes are cleaned up after a simulated crash
+
 ## Setting Up Your First Tunnel
 
 ### Quick way — paste from clipboard

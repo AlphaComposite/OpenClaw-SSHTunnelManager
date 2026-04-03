@@ -154,7 +154,8 @@ class TunnelManager: ObservableObject {
             self.processes.removeValue(forKey: tunnel.id)
             self.stoppingTunnelIDs.remove(tunnel.id)
             completion?()
-            if shouldReconnect && tunnel.status == .disconnected {
+            let isStillManaged = self.tunnels.contains { $0.id == tunnel.id }
+            if shouldReconnect && isStillManaged && tunnel.status == .disconnected {
                 self.connect(tunnel)
             }
         }

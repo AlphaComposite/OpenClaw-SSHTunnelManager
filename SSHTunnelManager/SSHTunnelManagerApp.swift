@@ -13,10 +13,32 @@ struct SSHTunnelManagerApp: App {
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
+    private enum StatusIndicatorColor: Equatable {
+        case gray
+        case yellow
+        case green
+        case red
+
+        var nsColor: NSColor {
+            switch self {
+            case .gray: return .systemGray
+            case .yellow: return .systemYellow
+            case .green: return .systemGreen
+            case .red: return .systemRed
+            }
+        }
+    }
+
+    private struct StatusItemAppearance: Equatable {
+        let color: StatusIndicatorColor
+        let title: String
+    }
+
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     private let tunnelManager = TunnelManager()
     private var cancellables = Set<AnyCancellable>()
+    private var lastStatusItemAppearance: StatusItemAppearance?
 
     private var showConnectionCount: Bool {
         get { !UserDefaults.standard.bool(forKey: "hideConnectionCount") }
@@ -75,21 +97,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let connectedCount = statuses.filter { $0 == .connected }.count
         let isTransient = statuses.contains { $0 == .connecting || $0 == .reconnecting }
 
-        let color: NSColor
+        let color: StatusIndicatorColor
         if total == 0 {
-            color = .systemGray
+            color = .gray
         } else if isTransient {
-            color = .systemYellow
+            color = .yellow
         } else if connectedCount > 0 {
-            color = .systemGreen
+            color = .green
         } else {
-            color = .systemRed
+            color = .red
         }
 
-        // Draw colored circle
+        let title: String
+        if showConnectionCount && total > 0 {
+            title = " \(connectedCount)/\(total)"
+        } else {
+            title = ""
+        }
+
+        let appearance = StatusItemAppearance(color: color, title: title)
+        guard appearance != lastStatusItemAppearance else { return }
+        lastStatusItemAppearance = appearance
+
         let circleSize = NSSize(width: 18, height: 18)
         let circleImage = NSImage(size: circleSize, flipped: false) { _ in
-            color.setFill()
+            color.nsColor.setFill()
             let diameter: CGFloat = 10
             let circleRect = NSRect(
                 x: (circleSize.width - diameter) / 2,
@@ -102,13 +134,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         circleImage.isTemplate = false
         button.image = circleImage
-
-        // Show count next to dot (e.g. "1/2"), or nothing if no tunnels
-        if showConnectionCount && total > 0 {
-            button.title = " \(connectedCount)/\(total)"
-        } else {
-            button.title = ""
-        }
+        button.title = title
     }
 
     // MARK: - Click Handling

@@ -3,6 +3,7 @@ import Combine
 
 enum ConnectResult {
     case success
+    case queuedWhileStopping
     case portConflict(existingTunnel: TunnelState)
 }
 
@@ -13,6 +14,8 @@ class TunnelManager: ObservableObject {
     private var reconnectTimers: [UUID: DispatchSourceTimer] = [:]
     private var healthCheckTimer: DispatchSourceTimer?
     private var tunnelCancellables = Set<AnyCancellable>()
+    private var stoppingTunnelIDs = Set<UUID>()
+    private var pendingConnectTunnelIDs = Set<UUID>()
 
     private let configKey = "SavedTunnelConfigurations"
 
@@ -61,21 +64,30 @@ class TunnelManager: ObservableObject {
     }
 
     func removeTunnel(_ tunnel: TunnelState) {
-        disconnect(tunnel)
-        tunnels.removeAll { $0.id == tunnel.id }
-        setupTunnelObservers()
-        saveConfigurations()
+        disconnect(tunnel) { [weak self] in
+            guard let self else { return }
+            self.tunnels.removeAll { $0.id == tunnel.id }
+            self.setupTunnelObservers()
+            self.saveConfigurations()
+        }
     }
 
     func updateTunnel(_ tunnel: TunnelState, with config: TunnelConfiguration) {
         let wasConnected = tunnel.status == .connected
-        if tunnel.status != .disconnected {
-            disconnect(tunnel)
+
+        let applyUpdate = { [weak self] in
+            guard let self else { return }
+            tunnel.configuration = config
+            self.saveConfigurations()
+            if wasConnected {
+                self.connect(tunnel)
+            }
         }
-        tunnel.configuration = config
-        saveConfigurations()
-        if wasConnected {
-            connect(tunnel)
+
+        if tunnel.status != .disconnected {
+            disconnect(tunnel, completion: applyUpdate)
+        } else {
+            applyUpdate()
         }
     }
 
@@ -84,6 +96,11 @@ class TunnelManager: ObservableObject {
     @discardableResult
     func connect(_ tunnel: TunnelState) -> ConnectResult {
         guard tunnel.status == .disconnected else { return .success }
+        guard !stoppingTunnelIDs.contains(tunnel.id) else {
+            pendingConnectTunnelIDs.insert(tunnel.id)
+            tunnel.addLog("Waiting for previous SSH process to stop before reconnecting...")
+            return .queuedWhileStopping
+        }
 
         // Check for active port conflict
         if let conflict = activeTunnelOnPort(tunnel.configuration.localPort, excluding: tunnel.id) {
@@ -100,8 +117,7 @@ class TunnelManager: ObservableObject {
 
     /// Disconnect the conflicting tunnel and connect the new one.
     func switchTo(_ tunnel: TunnelState, from existing: TunnelState) {
-        disconnect(existing)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+        disconnect(existing) { [weak self] in
             self?.connect(tunnel)
         }
     }
@@ -111,13 +127,8 @@ class TunnelManager: ObservableObject {
         tunnels.first { $0.id != id && $0.configuration.localPort == port && $0.status != .disconnected }
     }
 
-    func disconnect(_ tunnel: TunnelState) {
+    func disconnect(_ tunnel: TunnelState, completion: (() -> Void)? = nil) {
         cancelReconnectTimer(for: tunnel.id)
-
-        if let process = processes[tunnel.id] {
-            process.stop()
-            processes.removeValue(forKey: tunnel.id)
-        }
 
         let wasActive = tunnel.status != .disconnected
         tunnel.status = .disconnected
@@ -126,11 +137,32 @@ class TunnelManager: ObservableObject {
             tunnel.addLog("Disconnected by user")
         }
         objectWillChange.send()
+
+        guard let process = processes[tunnel.id] else {
+            completion?()
+            return
+        }
+
+        stoppingTunnelIDs.insert(tunnel.id)
+        process.stop { [weak self] in
+            guard let self else {
+                completion?()
+                return
+            }
+
+            let shouldReconnect = self.pendingConnectTunnelIDs.remove(tunnel.id) != nil
+            self.processes.removeValue(forKey: tunnel.id)
+            self.stoppingTunnelIDs.remove(tunnel.id)
+            completion?()
+            let isStillManaged = self.tunnels.contains { $0.id == tunnel.id }
+            if shouldReconnect && isStillManaged && tunnel.status == .disconnected {
+                self.connect(tunnel)
+            }
+        }
     }
 
     func reconnect(_ tunnel: TunnelState) {
-        disconnect(tunnel)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        disconnect(tunnel) { [weak self] in
             self?.connect(tunnel)
         }
     }
@@ -156,9 +188,9 @@ class TunnelManager: ObservableObject {
             tunnel?.addLog(message)
         }
 
-        process.onTermination = { [weak self, weak tunnel] exitCode in
+        process.onTermination = { [weak self, weak tunnel] processID, exitCode in
             guard let self = self, let tunnel = tunnel else { return }
-            self.handleTermination(tunnel: tunnel, exitCode: exitCode)
+            self.handleTermination(tunnel: tunnel, processID: processID, exitCode: exitCode)
         }
 
         do {
@@ -185,7 +217,9 @@ class TunnelManager: ObservableObject {
         }
     }
 
-    private func handleTermination(tunnel: TunnelState, exitCode: Int32) {
+    private func handleTermination(tunnel: TunnelState, processID: Int32, exitCode: Int32) {
+        guard processes[tunnel.id]?.processIdentifier == processID else { return }
+
         processes.removeValue(forKey: tunnel.id)
 
         // If user already set status to disconnected (via disconnect()), don't override
@@ -259,9 +293,9 @@ class TunnelManager: ObservableObject {
 
     private func performHealthCheck() {
         for tunnel in tunnels where tunnel.status == .connected {
-            if processes[tunnel.id]?.isRunning != true {
+            if let process = processes[tunnel.id], process.isRunning != true {
                 tunnel.addLog("Health check: SSH process not running")
-                handleTermination(tunnel: tunnel, exitCode: -1)
+                handleTermination(tunnel: tunnel, processID: process.processIdentifier ?? -1, exitCode: -1)
             }
         }
     }

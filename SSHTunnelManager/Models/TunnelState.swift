@@ -9,18 +9,31 @@ enum TunnelStatus: String, Equatable {
 }
 
 struct LogEntry: Identifiable {
+    private static let timestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
+
     let id = UUID()
     let timestamp: Date
     let message: String
+    let formattedTimestamp: String
 
-    var formattedTimestamp: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        return formatter.string(from: timestamp)
+    init(timestamp: Date, message: String) {
+        self.timestamp = timestamp
+        self.message = message
+        self.formattedTimestamp = Self.timestampFormatter.string(from: timestamp)
     }
 }
 
 class TunnelState: ObservableObject, Identifiable {
+    private static let relativeDateFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter
+    }()
+
     let id: UUID
     @Published var configuration: TunnelConfiguration
     @Published var status: TunnelStatus = .disconnected
@@ -45,9 +58,7 @@ class TunnelState: ObservableObject, Identifiable {
 
     var lastDisconnectFormatted: String? {
         guard let date = lastDisconnect else { return nil }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .full
-        return formatter.localizedString(for: date, relativeTo: Date())
+        return Self.relativeDateFormatter.localizedString(for: date, relativeTo: Date())
     }
 
     func uptimeString(relativeTo now: Date) -> String? {

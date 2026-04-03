@@ -21,11 +21,15 @@ class SSHTunnelProcess {
     private let configuration: TunnelConfiguration
     private var errorPipe: Pipe?
 
-    var onTermination: ((Int32) -> Void)?
+    var onTermination: ((Int32, Int32) -> Void)?
     var onOutput: ((String) -> Void)?
 
     var isRunning: Bool {
         process?.isRunning ?? false
+    }
+
+    var processIdentifier: Int32? {
+        process?.processIdentifier
     }
 
     init(configuration: TunnelConfiguration) {
@@ -43,10 +47,13 @@ class SSHTunnelProcess {
         let sshArguments = makeSSHArguments()
         proc.arguments = ["-c", makeWrapperScript(parentPID: getpid()), "ssh-wrapper"] + sshArguments
 
+        let usesExplicitKey = !configuration.sshKeyPath.isEmpty
         var environment = ProcessInfo.processInfo.environment
-        environment["SSH_AUTH_SOCK"] = nil
-        environment["SSH_AGENT_PID"] = nil
-        environment["SSH_ASKPASS_REQUIRE"] = "never"
+        if usesExplicitKey {
+            environment["SSH_AUTH_SOCK"] = nil
+            environment["SSH_AGENT_PID"] = nil
+            environment["SSH_ASKPASS_REQUIRE"] = "never"
+        }
         proc.environment = environment
 
         proc.standardInput = FileHandle.nullDevice
@@ -71,7 +78,7 @@ class SSHTunnelProcess {
         proc.terminationHandler = { [weak self] process in
             errPipe.fileHandleForReading.readabilityHandler = nil
             DispatchQueue.main.async {
-                self?.onTermination?(process.terminationStatus)
+                self?.onTermination?(process.processIdentifier, process.terminationStatus)
             }
         }
 
@@ -93,7 +100,6 @@ class SSHTunnelProcess {
             "-o", "StrictHostKeyChecking=accept-new",
             "-o", "ConnectTimeout=10",
             "-o", "BatchMode=yes",
-            "-o", "IdentityAgent=none",
         ]
 
         if configuration.sshPort != 22 {
@@ -102,7 +108,7 @@ class SSHTunnelProcess {
 
         if !configuration.sshKeyPath.isEmpty {
             let expandedPath = NSString(string: configuration.sshKeyPath).expandingTildeInPath
-            arguments += ["-i", expandedPath, "-o", "IdentitiesOnly=yes"]
+            arguments += ["-i", expandedPath, "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none"]
         }
 
         arguments.append("\(configuration.sshUser)@\(configuration.sshHost)")

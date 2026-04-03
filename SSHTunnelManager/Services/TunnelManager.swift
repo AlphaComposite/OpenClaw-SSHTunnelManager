@@ -175,9 +175,9 @@ class TunnelManager: ObservableObject {
             tunnel?.addLog(message)
         }
 
-        process.onTermination = { [weak self, weak tunnel] exitCode in
+        process.onTermination = { [weak self, weak tunnel] processID, exitCode in
             guard let self = self, let tunnel = tunnel else { return }
-            self.handleTermination(tunnel: tunnel, exitCode: exitCode)
+            self.handleTermination(tunnel: tunnel, processID: processID, exitCode: exitCode)
         }
 
         do {
@@ -204,7 +204,9 @@ class TunnelManager: ObservableObject {
         }
     }
 
-    private func handleTermination(tunnel: TunnelState, exitCode: Int32) {
+    private func handleTermination(tunnel: TunnelState, processID: Int32, exitCode: Int32) {
+        guard processes[tunnel.id]?.processIdentifier == processID else { return }
+
         processes.removeValue(forKey: tunnel.id)
 
         // If user already set status to disconnected (via disconnect()), don't override
@@ -278,9 +280,9 @@ class TunnelManager: ObservableObject {
 
     private func performHealthCheck() {
         for tunnel in tunnels where tunnel.status == .connected {
-            if processes[tunnel.id]?.isRunning != true {
+            if let process = processes[tunnel.id], process.isRunning != true {
                 tunnel.addLog("Health check: SSH process not running")
-                handleTermination(tunnel: tunnel, exitCode: -1)
+                handleTermination(tunnel: tunnel, processID: process.processIdentifier ?? -1, exitCode: -1)
             }
         }
     }

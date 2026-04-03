@@ -16,7 +16,9 @@ cleanup() {
     wait "$SSHD_PID" 2>/dev/null || true
   fi
 
-  pkill -f "${LOCAL_FORWARD_PORT}:127.0.0.1:22" 2>/dev/null || true
+  if [[ -n "${LOCAL_FORWARD_PORT:-}" ]]; then
+    pkill -f "${LOCAL_FORWARD_PORT}:127.0.0.1:22" 2>/dev/null || true
+  fi
   rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
@@ -138,8 +140,17 @@ FileHandle.standardOutput.write(Data("CONNECTED\n".utf8))
 switch mode {
 case "disconnect":
     RunLoop.main.run(until: Date().addingTimeInterval(4))
-    manager.disconnectAll()
-    RunLoop.main.run(until: Date().addingTimeInterval(2))
+    var didDisconnect = false
+    manager.disconnect(tunnel) {
+        didDisconnect = true
+    }
+    let disconnectDeadline = Date().addingTimeInterval(10)
+    while !didDisconnect && Date() < disconnectDeadline {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+    }
+    guard didDisconnect else {
+        fail("Tunnel did not finish disconnecting before timeout")
+    }
 case "crash":
     RunLoop.main.run(until: Date().addingTimeInterval(30))
 default:
@@ -156,9 +167,9 @@ swiftc \
   "$HARNESS_DIR/main.swift"
 
 assert_no_residual_processes() {
-  if pgrep -f "${LOCAL_FORWARD_PORT}:127.0.0.1:22|ssh-wrapper" >/dev/null 2>&1; then
+  if pgrep -f "${LOCAL_FORWARD_PORT}:127.0.0.1:22" >/dev/null 2>&1; then
     echo "Residual SSH tunnel process detected" >&2
-    pgrep -fl "${LOCAL_FORWARD_PORT}:127.0.0.1:22|ssh-wrapper" >&2 || true
+    pgrep -fl "${LOCAL_FORWARD_PORT}:127.0.0.1:22" >&2 || true
     exit 1
   fi
 }

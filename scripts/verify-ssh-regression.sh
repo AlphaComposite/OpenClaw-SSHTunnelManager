@@ -133,6 +133,8 @@ guard tunnel.status == .connected else {
     fail("Tunnel failed to reach connected state before timeout. Final status: \(tunnel.status.rawValue). Last log: \(lastLog)")
 }
 
+FileHandle.standardOutput.write(Data("CONNECTED\n".utf8))
+
 switch mode {
 case "disconnect":
     RunLoop.main.run(until: Date().addingTimeInterval(4))
@@ -161,10 +163,35 @@ assert_no_residual_processes() {
   fi
 }
 
+wait_for_connected_signal() {
+  local output_file="$1"
+  local harness_pid="$2"
+  local deadline=$((SECONDS + 15))
+
+  while (( SECONDS < deadline )); do
+    if [[ -f "$output_file" ]] && grep -q '^CONNECTED$' "$output_file"; then
+      return 0
+    fi
+
+    if ! kill -0 "$harness_pid" 2>/dev/null; then
+      echo "Harness exited before signaling connected state" >&2
+      [[ -f "$output_file" ]] && cat "$output_file" >&2 || true
+      return 1
+    fi
+
+    sleep 0.1
+  done
+
+  echo "Timed out waiting for harness connected signal" >&2
+  [[ -f "$output_file" ]] && cat "$output_file" >&2 || true
+  return 1
+}
+
 echo "== CPU check while connected =="
 "$HARNESS_DIR/harness" disconnect "$SSHD_DIR/test_key" "$SSHD_PORT" "$LOCAL_FORWARD_PORT" >"$HARNESS_DIR/disconnect.out" 2>"$HARNESS_DIR/disconnect.err" &
 HARNESS_PID=$!
-sleep 3
+wait_for_connected_signal "$HARNESS_DIR/disconnect.out" "$HARNESS_PID"
+sleep 1
 CPU_VALUE="$(ps -o %cpu= -p "$HARNESS_PID" | tr -d '[:space:]')"
 echo "Harness CPU: ${CPU_VALUE}%"
 python3 - <<PY
@@ -181,7 +208,7 @@ assert_no_residual_processes
 echo "== Crash cleanup check =="
 "$HARNESS_DIR/harness" crash "$SSHD_DIR/test_key" "$SSHD_PORT" "$LOCAL_FORWARD_PORT" >"$HARNESS_DIR/crash.out" 2>"$HARNESS_DIR/crash.err" &
 CRASH_PID=$!
-sleep 4
+wait_for_connected_signal "$HARNESS_DIR/crash.out" "$CRASH_PID"
 kill -9 "$CRASH_PID" 2>/dev/null || true
 CRASH_PID=
 sleep 3

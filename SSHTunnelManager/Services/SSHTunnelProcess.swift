@@ -15,6 +15,8 @@ enum SSHTunnelError: LocalizedError {
 }
 
 class SSHTunnelProcess {
+    private static let stopQueue = DispatchQueue(label: "SSHTunnelProcess.stop", qos: .userInitiated)
+
     private var process: Process?
     private let configuration: TunnelConfiguration
     private var errorPipe: Pipe?
@@ -156,33 +158,52 @@ class SSHTunnelProcess {
         """
     }
 
-    func stop() {
-        guard let proc = process, proc.isRunning else { return }
+    func stop(completion: @escaping () -> Void = {}) {
+        guard let proc = process else {
+            completion()
+            return
+        }
+
+        guard proc.isRunning else {
+            process = nil
+            completion()
+            return
+        }
+
         let wrapperPID = proc.processIdentifier
         let parentPID = getpid()
+        let trackedPIDs = processTreePIDs(rootPID: wrapperPID)
 
         signalDescendants(of: wrapperPID, signal: SIGTERM)
         proc.terminate()
 
-        DispatchQueue.global().asyncAfter(deadline: .now() + 3) { [weak self] in
-            // Verify the wrapper PID hasn't been recycled before sending SIGKILL
-            guard self?.isProcessStillChild(pid: wrapperPID, expectedParent: parentPID) == true else {
+        Self.stopQueue.async { [weak self] in
+            guard let self else {
+                DispatchQueue.main.async(execute: completion)
                 return
             }
 
-            self?.signalDescendants(of: wrapperPID, signal: SIGKILL)
-            if self?.process?.isRunning == true {
-                self?.process?.interrupt()
-            }
-            // SIGKILL fallback for truly hung processes (e.g. network wedge)
-            DispatchQueue.global().asyncAfter(deadline: .now() + 3) { [weak self] in
-                guard let pid = self?.process?.processIdentifier, pid != 0,
-                      self?.process?.isRunning == true else { return }
+            self.waitForProcessesToExit(trackedPIDs, timeout: 3)
 
-                // Final check before SIGKILL
-                if self?.isProcessStillChild(pid: pid, expectedParent: parentPID) == true {
-                    kill(pid, SIGKILL)
+            if self.anyProcessAlive(in: trackedPIDs) {
+                if self.isProcessStillChild(pid: wrapperPID, expectedParent: parentPID) {
+                    self.signalDescendants(of: wrapperPID, signal: SIGKILL)
+                    if self.process?.isRunning == true {
+                        self.process?.interrupt()
+                    }
+                    kill(wrapperPID, SIGKILL)
+                } else if self.process?.isRunning == true {
+                    self.process?.interrupt()
                 }
+
+                self.waitForProcessesToExit(trackedPIDs, timeout: 3)
+            }
+
+            DispatchQueue.main.async { [weak self] in
+                if self?.process?.processIdentifier == wrapperPID {
+                    self?.process = nil
+                }
+                completion()
             }
         }
     }
@@ -200,6 +221,16 @@ class SSHTunnelProcess {
 
         guard rootPID > 0 else { return }
         kill(rootPID, signal)
+    }
+
+    private func processTreePIDs(rootPID: Int32) -> Set<Int32> {
+        guard rootPID > 0 else { return [] }
+
+        var processIDs: Set<Int32> = [rootPID]
+        for childPID in childProcessIDs(of: rootPID) {
+            processIDs.formUnion(processTreePIDs(rootPID: childPID))
+        }
+        return processIDs
     }
 
     private func childProcessIDs(of parentPID: Int32) -> [Int32] {
@@ -251,6 +282,26 @@ class SSHTunnelProcess {
 
         let ppid = output.trimmingCharacters(in: .whitespacesAndNewlines)
         return ppid == "\(expectedParent)"
+    }
+
+    private func anyProcessAlive(in processIDs: Set<Int32>) -> Bool {
+        processIDs.contains(where: isProcessAlive(pid:))
+    }
+
+    private func isProcessAlive(pid: Int32) -> Bool {
+        guard pid > 0 else { return false }
+        if kill(pid, 0) == 0 { return true }
+        return errno == EPERM
+    }
+
+    private func waitForProcessesToExit(_ processIDs: Set<Int32>, timeout: TimeInterval) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if !anyProcessAlive(in: processIDs) {
+                return
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
     }
 
     deinit {

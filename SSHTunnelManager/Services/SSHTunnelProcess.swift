@@ -109,7 +109,9 @@ class SSHTunnelProcess {
 
     private func makeWrapperScript(parentPID: Int32) -> String {
         """
+        original_parent_pid=\(parentPID)
         parent_pid=\(parentPID)
+        wrapper_pid=$$
         child_pid=
 
         kill_tree() {
@@ -131,8 +133,22 @@ class SSHTunnelProcess {
             return
           fi
 
+          # Verify we're still the original wrapper process
+          current_ppid=$(ps -o ppid= -p "$wrapper_pid" 2>/dev/null | tr -d '[:space:]')
+          if [ "$current_ppid" != "$original_parent_pid" ] && [ -n "$current_ppid" ]; then
+            # Our PID has been recycled; don't signal potentially unrelated processes
+            return
+          fi
+
           kill_tree TERM "$child_pid"
           sleep 1
+
+          # Re-check before SIGKILL
+          current_ppid=$(ps -o ppid= -p "$wrapper_pid" 2>/dev/null | tr -d '[:space:]')
+          if [ "$current_ppid" != "$original_parent_pid" ] && [ -n "$current_ppid" ]; then
+            return
+          fi
+
           kill_tree KILL "$child_pid"
         }
 
@@ -142,11 +158,20 @@ class SSHTunnelProcess {
         child_pid=$!
 
         while kill -0 "$child_pid" 2>/dev/null; do
+          # Check if original parent is still alive
           if ! kill -0 "$parent_pid" 2>/dev/null; then
             cleanup_child_tree
             wait "$child_pid" 2>/dev/null || true
             exit 0
           fi
+
+          # Verify our wrapper PPID hasn't changed (PID recycling check)
+          current_ppid=$(ps -o ppid= -p "$wrapper_pid" 2>/dev/null | tr -d '[:space:]')
+          if [ -n "$current_ppid" ] && [ "$current_ppid" != "$original_parent_pid" ]; then
+            # Our PID was recycled; exit without cleanup
+            exit 0
+          fi
+
           sleep 1
         done
 
@@ -158,11 +183,17 @@ class SSHTunnelProcess {
     func stop() {
         guard let proc = process, proc.isRunning else { return }
         let wrapperPID = proc.processIdentifier
+        let parentPID = getpid()
 
         signalDescendants(of: wrapperPID, signal: SIGTERM)
         proc.terminate()
 
         DispatchQueue.global().asyncAfter(deadline: .now() + 3) { [weak self] in
+            // Verify the wrapper PID hasn't been recycled before sending SIGKILL
+            guard self?.isProcessStillChild(pid: wrapperPID, expectedParent: parentPID) == true else {
+                return
+            }
+
             self?.signalDescendants(of: wrapperPID, signal: SIGKILL)
             if self?.process?.isRunning == true {
                 self?.process?.interrupt()
@@ -171,7 +202,11 @@ class SSHTunnelProcess {
             DispatchQueue.global().asyncAfter(deadline: .now() + 3) { [weak self] in
                 guard let pid = self?.process?.processIdentifier, pid != 0,
                       self?.process?.isRunning == true else { return }
-                kill(pid, SIGKILL)
+
+                // Final check before SIGKILL
+                if self?.isProcessStillChild(pid: pid, expectedParent: parentPID) == true {
+                    kill(pid, SIGKILL)
+                }
             }
         }
     }
@@ -215,6 +250,31 @@ class SSHTunnelProcess {
         return output
             .split(whereSeparator: \.isNewline)
             .compactMap { Int32($0) }
+    }
+
+    private func isProcessStillChild(pid: Int32, expectedParent: Int32) -> Bool {
+        let proc = Process()
+        let pipe = Pipe()
+
+        proc.executableURL = URL(fileURLWithPath: "/bin/ps")
+        proc.arguments = ["-o", "ppid=", "-p", "\(pid)"]
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+        } catch {
+            return false
+        }
+
+        guard proc.terminationStatus == 0 else { return false }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let output = String(data: data, encoding: .utf8) else { return false }
+
+        let ppid = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ppid == "\(expectedParent)"
     }
 
     deinit {

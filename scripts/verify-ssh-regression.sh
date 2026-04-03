@@ -5,7 +5,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sshtunnelmanager-regression.XXXXXX")"
 SSHD_DIR="$WORK_DIR/sshd"
 HARNESS_DIR="$WORK_DIR/harness"
-LOCAL_FORWARD_PORT=45555
 
 cleanup() {
   if [[ -n "${CRASH_PID:-}" ]]; then
@@ -47,6 +46,7 @@ PY
 }
 
 SSHD_PORT="$(pick_free_port)"
+LOCAL_FORWARD_PORT="$(pick_free_port)"
 
 mkdir -p "$SSHD_DIR" "$HARNESS_DIR"
 
@@ -110,7 +110,22 @@ let manager = TunnelManager()
 manager.tunnels.removeAll()
 let tunnel = TunnelState(configuration: config)
 manager.tunnels = [tunnel]
-_ = manager.connect(tunnel)
+
+let connectResult = manager.connect(tunnel)
+if case .failure(let error) = connectResult {
+    print("Failed to initiate connection: \(error)")
+    exit(1)
+}
+
+let timeout = Date().addingTimeInterval(10)
+while tunnel.status != .connected && Date() < timeout {
+    RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+}
+
+if tunnel.status != .connected {
+    print("Tunnel failed to reach connected state within timeout. Status: \(tunnel.status)")
+    exit(1)
+}
 
 switch mode {
 case "disconnect":

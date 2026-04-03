@@ -5,7 +5,7 @@ build:
 
 install: build
 	rm -rf /Applications/SSHTunnelManager.app
-	cp -R "$$(find "$$HOME/Library/Developer/Xcode/DerivedData" -path '*SSHTunnelManager*/Build/Products/Release/SSHTunnelManager.app' -print | tail -n 1)" /Applications/SSHTunnelManager.app
+	cp -R "$$(xcodebuild -project SSHTunnelManager.xcodeproj -scheme SSHTunnelManager -configuration Release -showBuildSettings | grep -m 1 'BUILT_PRODUCTS_DIR' | sed 's/.*= *//')/SSHTunnelManager.app" /Applications/SSHTunnelManager.app
 
 verify:
 	./scripts/verify-ssh-regression.sh
